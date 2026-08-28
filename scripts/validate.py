@@ -19,7 +19,13 @@ def check(condition: bool, message: str) -> None:
 
 
 for py_file in sorted(ROOT.rglob("*.py")):
-    if any(part in {".venv", "venv"} for part in py_file.parts):
+    relative_parts = py_file.relative_to(ROOT).parts
+    if any(
+        part == "venv"
+        or part.startswith(".venv")
+        or part in {".git", ".tox", ".nox", "__pycache__"}
+        for part in relative_parts
+    ):
         continue
     try:
         ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))

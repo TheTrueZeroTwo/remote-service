@@ -168,3 +168,6 @@ data/
 .webui-auth/
 test-results/
 *.htpasswd
+
+# Local Python virtual environments
+.venv*/
