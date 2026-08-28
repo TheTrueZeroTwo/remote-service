@@ -115,8 +115,12 @@ check("htpasswd -Bni" in auth_init, "auth initializer creates bcrypt without pas
 check(".webui-auth" in auth_init, "generated credentials persist inside storage volume")
 
 nginx = (ROOT / "docker/nginx.conf.template").read_text(encoding="utf-8")
-for token in ["auth_basic", "Content-Security-Policy", "limit_req", "limit_except GET", "X-Robots-Tag"]:
+for token in ["auth_basic", "Content-Security-Policy", "limit_req", "limit_except GET POST", "X-Robots-Tag"]:
     check(token in nginx, f"nginx UI protection contains {token}")
+check(
+    "form-action 'self'" in nginx,
+    "nginx CSP permits same-origin forms",
+)
 check("/admin" not in nginx.lower(), "dashboard does not use common /admin path")
 for temp_path in [
     "client_body_temp_path /run/lnreader/client_temp",
@@ -156,7 +160,17 @@ check(
 )
 
 php = (ROOT / "web/index.php").read_text(encoding="utf-8")
-for token in ["Current backup uploads", "Stored backups", "LNReader app server URL", "htmlspecialchars"]:
+for token in [
+    "Current backup uploads",
+    "Stored backups",
+    "LNReader app server URL",
+    "Delete permanently",
+    "safe_backup_dir",
+    "csrf_token",
+    "delete_backup_tree",
+    "backup_has_active_upload",
+    "htmlspecialchars",
+]:
     check(token in php, f"PHP dashboard contains {token}")
 check("<script" not in php.lower(), "PHP dashboard contains no JavaScript")
 
