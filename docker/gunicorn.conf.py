@@ -12,3 +12,11 @@ accesslog = "-"
 errorlog = "-"
 loglevel = os.environ.get("LOG_LEVEL", "info")
 capture_output = True
+
+# Nginx is the only HTTP peer of Gunicorn inside the container. It
+# normalizes proxy scheme information to X-Forwarded-Proto before passing
+# requests here.
+forwarded_allow_ips = "127.0.0.1"
+secure_scheme_headers = {
+    "X-FORWARDED-PROTO": "https",
+}

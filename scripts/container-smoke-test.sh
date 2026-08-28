@@ -85,6 +85,21 @@ curl --fail --silent --show-error "http://127.0.0.1:$PORT/download/smoke.backup&
 cmp "$TMP/payload.bin" "$TMP/download.bin"
 echo "PASS: upload/list/download round trip"
 
+banner "Reverse proxy scheme normalization"
+
+proxy_response="$(
+  curl --fail --silent --show-error \
+    -H 'X-Forwarded-Proto: https' \
+    -H 'X-Forwarded-Ssl: on' \
+    -H 'X-Forwarded-Protocol: ssl' \
+    "http://127.0.0.1:$PORT/healthz"
+)"
+
+[[ "$proxy_response" == '{"status":"ok"}' ]] ||
+  fail "conflicting reverse-proxy scheme headers were not normalized: $proxy_response"
+
+echo "PASS: conflicting reverse-proxy scheme headers are normalized"
+
 banner "Web UI authentication"
 status="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/$SLUG/")"
 [[ "$status" == 401 ]] || fail "unauthenticated dashboard expected 401, got $status"

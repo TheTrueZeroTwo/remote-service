@@ -122,6 +122,33 @@ for temp_path in [
     check(temp_path in nginx, f"nginx non-root temp path: {temp_path.split()[0]}")
 check("/var/lib/nginx" not in nginx, "nginx avoids root-owned runtime temp paths")
 
+check(
+    "map $http_x_forwarded_proto $lnreader_forwarded_proto" in nginx,
+    "nginx normalizes forwarded proxy scheme",
+)
+check(
+    "proxy_set_header X-Forwarded-Proto $lnreader_forwarded_proto;" in nginx,
+    "nginx sends normalized X-Forwarded-Proto",
+)
+check(
+    'proxy_set_header X-Forwarded-Ssl "";' in nginx,
+    "nginx strips alternate X-Forwarded-Ssl",
+)
+check(
+    'proxy_set_header X-Forwarded-Protocol "";' in nginx,
+    "nginx strips alternate X-Forwarded-Protocol",
+)
+
+gunicorn_config = (ROOT / "docker/gunicorn.conf.py").read_text(encoding="utf-8")
+check(
+    'forwarded_allow_ips = "127.0.0.1"' in gunicorn_config,
+    "gunicorn trusts forwarded headers only from internal Nginx",
+)
+check(
+    '"X-FORWARDED-PROTO": "https"' in gunicorn_config,
+    "gunicorn uses one normalized secure scheme header",
+)
+
 php = (ROOT / "web/index.php").read_text(encoding="utf-8")
 for token in ["Current backup uploads", "Stored backups", "LNReader app server URL", "htmlspecialchars"]:
     check(token in php, f"PHP dashboard contains {token}")

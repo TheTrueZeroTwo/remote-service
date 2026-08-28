@@ -14,6 +14,16 @@ http {
     sendfile on;
     keepalive_timeout 30;
 
+    # Normalize the original client scheme before proxying to Gunicorn.
+    #
+    # Reverse proxies may provide several HTTPS indicators. Only the
+    # normalized X-Forwarded-Proto value is passed to Gunicorn.
+    map $http_x_forwarded_proto $lnreader_forwarded_proto {
+        default $scheme;
+        http http;
+        https https;
+    }
+
     # All temporary paths must remain writable when Nginx runs as the non-root
     # lnreader user.
     client_body_temp_path /run/lnreader/client_temp;
@@ -74,7 +84,14 @@ http {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Host $http_host;
-            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Pass exactly one scheme indicator to Gunicorn. Alternate
+            # secure-scheme headers such as X-Forwarded-Ssl can conflict
+            # with X-Forwarded-Proto after multiple reverse-proxy hops.
+            proxy_set_header X-Forwarded-Proto $lnreader_forwarded_proto;
+            proxy_set_header X-Forwarded-Ssl "";
+            proxy_set_header X-Forwarded-Protocol "";
+
             proxy_request_buffering off;
             proxy_buffering off;
             proxy_read_timeout 300s;
