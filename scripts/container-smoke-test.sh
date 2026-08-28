@@ -85,6 +85,21 @@ curl --fail --silent --show-error "http://127.0.0.1:$PORT/download/smoke.backup&
 cmp "$TMP/payload.bin" "$TMP/download.bin"
 echo "PASS: upload/list/download round trip"
 
+banner "Chunked streaming upload"
+
+dd if=/dev/urandom of="$TMP/chunked.bin" bs=1M count=8 status=none
+
+curl --http1.1   --fail   --silent   --show-error   -H 'Content-Length:'   -H 'Transfer-Encoding: chunked'   --data-binary @"$TMP/chunked.bin"   "http://127.0.0.1:$PORT/upload/chunked.backup&&data.bin"   > "$TMP/chunked-upload.json"
+
+curl   --fail   --silent   --show-error   "http://127.0.0.1:$PORT/download/chunked.backup&&data.bin"   > "$TMP/chunked-download.bin"
+
+cmp "$TMP/chunked.bin" "$TMP/chunked-download.bin"
+
+grep -Fq '"size":8388608' "$TMP/chunked-upload.json" ||
+  fail "chunked upload returned unexpected size"
+
+echo "PASS: chunked request streamed and round-tripped without Content-Length"
+
 banner "Reverse proxy scheme normalization"
 
 proxy_response="$(

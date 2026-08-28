@@ -43,41 +43,87 @@ def _route_parts(path: str, prefix: str) -> tuple[str, str] | None:
     return backup_name, filename
 
 
-def _stream_upload(environ: dict, file_path: Path, backup_name: str, filename: str, total: int) -> int:
+def _stream_upload(
+    environ: dict,
+    file_path: Path,
+    backup_name: str,
+    filename: str,
+    total: int | None,
+) -> int:
     upload_id = uuid.uuid4().hex
     started_at = time.time()
-    temp_path = file_path.with_name(f".{file_path.name}.upload-{upload_id}.part")
+    temp_path = file_path.with_name(
+        f".{file_path.name}.upload-{upload_id}.part"
+    )
     received = 0
+
     update_upload(
         upload_id,
         backup_name=backup_name,
         filename=filename,
         bytes_received=0,
-        total_bytes=total,
+        total_bytes=total if total is not None else 0,
         started_at=started_at,
     )
+
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        stream = environ["wsgi.input"]
+
         with temp_path.open("wb") as handle:
-            remaining = total
-            while remaining > 0:
-                chunk = environ["wsgi.input"].read(min(UPLOAD_CHUNK_SIZE, remaining))
-                if not chunk:
-                    raise IOError("request body ended before Content-Length")
-                handle.write(chunk)
-                received += len(chunk)
-                remaining -= len(chunk)
-                update_upload(upload_id, bytes_received=received)
+            if total is None:
+                # Chunked / otherwise terminated request.
+                #
+                # Gunicorn exposes a decoded input stream and marks it with
+                # wsgi.input_terminated. Read until EOF without ever
+                # materializing the complete request body.
+                while True:
+                    chunk = stream.read(UPLOAD_CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    handle.write(chunk)
+                    received += len(chunk)
+
+                    update_upload(
+                        upload_id,
+                        bytes_received=received,
+                    )
+            else:
+                # Fixed-length request. Keep the existing strict short-body
+                # detection rather than silently accepting a truncated file.
+                remaining = total
+
+                while remaining > 0:
+                    chunk = stream.read(
+                        min(UPLOAD_CHUNK_SIZE, remaining)
+                    )
+
+                    if not chunk:
+                        raise IOError(
+                            "request body ended before Content-Length"
+                        )
+
+                    handle.write(chunk)
+                    received += len(chunk)
+                    remaining -= len(chunk)
+
+                    update_upload(
+                        upload_id,
+                        bytes_received=received,
+                    )
+
             handle.flush()
             os.fsync(handle.fileno())
+
         os.replace(temp_path, file_path)
         return received
+
     finally:
         try:
             temp_path.unlink(missing_ok=True)
         finally:
             remove_upload(upload_id)
-
 
 def app(environ: dict, start_response) -> Iterable[bytes]:
     method = str(environ.get("REQUEST_METHOD", "GET")).upper()
@@ -109,12 +155,38 @@ def app(environ: dict, start_response) -> Iterable[bytes]:
         except ValueError:
             return _json_response(start_response, "400 Bad Request", {"error": "invalid backup path"})
 
-        try:
-            content_length = int(environ.get("CONTENT_LENGTH") or "0")
-        except ValueError:
-            return _json_response(start_response, "400 Bad Request", {"error": "invalid content length"})
-        if content_length < 0:
-            return _json_response(start_response, "400 Bad Request", {"error": "invalid content length"})
+        raw_content_length = str(
+            environ.get("CONTENT_LENGTH") or ""
+        ).strip()
+
+        if raw_content_length:
+            try:
+                content_length: int | None = int(raw_content_length)
+            except ValueError:
+                return _json_response(
+                    start_response,
+                    "400 Bad Request",
+                    {"error": "invalid content length"},
+                )
+
+            if content_length < 0:
+                return _json_response(
+                    start_response,
+                    "400 Bad Request",
+                    {"error": "invalid content length"},
+                )
+        else:
+            # Streaming HTTP requests such as Transfer-Encoding: chunked do
+            # not provide Content-Length. Only read until EOF when the WSGI
+            # server explicitly says the input stream is terminated.
+            if not bool(environ.get("wsgi.input_terminated")):
+                return _json_response(
+                    start_response,
+                    "411 Length Required",
+                    {"error": "content length required"},
+                )
+
+            content_length = None
 
         try:
             received = _stream_upload(environ, file_path, backup_name, filename, content_length)

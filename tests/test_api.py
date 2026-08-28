@@ -10,7 +10,15 @@ import pytest
 from src.server.server import app
 
 
-def request(method: str, path: str, body: bytes = b"", *, stream=None, content_length: int | None = None):
+def request(
+    method: str,
+    path: str,
+    body: bytes = b"",
+    *,
+    stream=None,
+    content_length: int | None = None,
+    omit_content_length: bool = False,
+):
     captured: dict[str, object] = {}
 
     def start_response(status, headers):
@@ -20,9 +28,15 @@ def request(method: str, path: str, body: bytes = b"", *, stream=None, content_l
     environ = {
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
-        "CONTENT_LENGTH": str(len(body) if content_length is None else content_length),
         "wsgi.input": stream if stream is not None else io.BytesIO(body),
     }
+
+    if omit_content_length:
+        environ["wsgi.input_terminated"] = True
+    else:
+        environ["CONTENT_LENGTH"] = str(
+            len(body) if content_length is None else content_length
+        )
     response = app(environ, start_response)
     try:
         payload = b"".join(response)
@@ -76,6 +90,25 @@ def test_nested_filename_round_trip(workspace: Path):
     path = "/upload/novels.backup&&nested/chapter/data.zip"
     assert request("POST", path, payload)[0] == 200
     assert request("GET", "/download/novels.backup&&nested/chapter/data.zip")[2] == payload
+
+
+def test_streaming_upload_without_content_length(workspace: Path):
+    payload = (b"streaming-lnreader-backup-" * 65536) + b"EOF"
+
+    status, _, body = request(
+        "POST",
+        "/upload/chunked.backup&&data.zip",
+        payload,
+        omit_content_length=True,
+    )
+
+    assert status == 200
+
+    decoded = json.loads(body)
+    assert decoded["size"] == len(payload)
+
+    saved = workspace / "chunked.backup" / "data.zip"
+    assert saved.read_bytes() == payload
 
 
 def test_missing_download_is_404(workspace: Path):
