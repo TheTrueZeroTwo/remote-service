@@ -100,6 +100,42 @@ grep -Fq '"size":8388608' "$TMP/chunked-upload.json" ||
 
 echo "PASS: chunked request streamed and round-tripped without Content-Length"
 
+banner "Live chunked request streaming"
+
+dd if=/dev/zero of="$TMP/live-chunked.bin" bs=1M count=2 status=none
+
+curl --http1.1   --fail   --silent   --show-error   --limit-rate 256k   -H 'Content-Length:'   -H 'Transfer-Encoding: chunked'   --data-binary @"$TMP/live-chunked.bin"   "http://127.0.0.1:$PORT/upload/live-chunked.backup&&slow.bin"   > "$TMP/live-chunked-upload.json" &
+
+chunked_pid=$!
+
+visible=0
+
+for _ in $(seq 1 20); do
+  if docker exec "$NAME" sh -c     'grep -Fq "live-chunked.backup" /run/lnreader/uploads.json 2>/dev/null'
+  then
+    visible=1
+    break
+  fi
+
+  sleep 0.25
+done
+
+if [[ "$visible" != 1 ]]; then
+  kill "$chunked_pid" 2>/dev/null || true
+  wait "$chunked_pid" 2>/dev/null || true
+  fail "Gunicorn did not see chunked upload before client completed"
+fi
+
+echo "PASS: chunked body reaches Gunicorn before upload completes"
+
+wait "$chunked_pid"
+
+curl   --fail   --silent   --show-error   "http://127.0.0.1:$PORT/download/live-chunked.backup&&slow.bin"   > "$TMP/live-chunked-download.bin"
+
+cmp "$TMP/live-chunked.bin" "$TMP/live-chunked-download.bin"
+
+echo "PASS: live chunked upload completed and round-tripped"
+
 banner "Reverse proxy scheme normalization"
 
 proxy_response="$(
